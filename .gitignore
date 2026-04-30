@@ -1,0 +1,27 @@
+# === Backend Python ===
+edu-grade-mocavi/.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+edu-grade-mocavi/.env
+edu-grade-mocavi/app/__pycache__/
+
+# === Frontend Next.js ===
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# === IDE / OS ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# === Logs / temporales ===
+*.log
+/tmp/
