@@ -1,5 +1,9 @@
+/* stylelint-disable at-rule-no-unknown */
 @import "tailwindcss";
 
+/* @variant y @theme son directivas de Tailwind v4. El linter de VS Code
+   las marca como "Unknown at rule" cuando no reconoce el lenguaje
+   tailwindcss; .vscode/settings.json silencia esos avisos. */
 @variant dark (&:is(.dark *));
 
 /* Escala tipográfica global más grande (≈133%).
@@ -13,7 +17,7 @@
    Si en algún momento quieres volver al tamaño original, basta con
    poner `font-size: 100%`. */
 html {
-  font-size: 133%;
+  font-size: 110%;
 }
 
 :root {
@@ -134,9 +138,69 @@ body {
 .animate-popIn          { animation: popIn          0.32s cubic-bezier(0.34,1.56,0.64,1) both; }
 .animate-softPulse      { animation: softPulse      0.6s ease-in-out both; }
 
-/* Transiciones globales suaves para estados interactivos */
-button, a, input, select, textarea {
-  transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, transform 0.15s ease;
+/* ─────────────────────────────────────────────────────────────
+   Botones: feedback al pulsar más limpio
+   ─────────────────────────────────────────────────────────────
+   Antes había dos problemas perceptibles al hacer click:
+     1) Algunos botones combinaban hover:scale-[1.02] con active:scale-95
+        → un salto del 7% que se siente "tirado" + doble rebote al soltar.
+     2) La curva `ease` por defecto sumaba un toque bouncy con los pads
+        que reescalaban el contenido (texto borroso un instante).
+
+   Solución sin tocar cada botón: ajustar las utilidades de scale
+   más comunes para que la diferencia hover↔active sea menor y la
+   curva sea la "standard easing" (Material), menos rebotona.
+*/
+
+/* Quitar la franja azul nativa al tocar en móvil y el delay de 300 ms */
+button,
+a,
+[role="button"],
+label[for],
+summary {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+/* Transiciones globales: lista corta y curva natural */
+button, a, input, select, textarea, label[for] {
+  transition:
+    background-color 160ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color     160ms cubic-bezier(0.4, 0, 0.2, 1),
+    color            160ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow       160ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform        120ms cubic-bezier(0.2, 0, 0.2, 1),
+    opacity          160ms ease;
+  transform-origin: center;
+}
+
+/* Suaviza el "press":
+   - active 95% es muy agresivo → 97% se siente como un click táctil real.
+   - hover 1.02 sumaba al rebote → 1.015 (visible pero sin tirón).
+*/
+.active\:scale-95:active   { transform: scale(0.97); }
+.hover\:scale-\[1\.02\]:hover { transform: scale(1.015); }
+.hover\:scale-105:hover     { transform: scale(1.03); }
+
+/* Cuando se combinan hover y active, prioriza el active sin que ambos
+   compitan (evita el doble bounce al soltar mientras el cursor sigue encima). */
+.active\:scale-95.hover\:scale-\[1\.02\]:active,
+.active\:scale-95.hover\:scale-105:active {
+  transform: scale(0.97);
+}
+
+/* GPU hint mientras el usuario mantiene el botón pulsado: render más fluido */
+button:active, a:active, [role="button"]:active {
+  will-change: transform;
+}
+
+/* Si el usuario prefiere menos movimiento, anulamos los efectos de escala */
+@media (prefers-reduced-motion: reduce) {
+  .active\:scale-95:active,
+  .hover\:scale-\[1\.02\]:hover,
+  .hover\:scale-105:hover { transform: none; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
 
 /* Evitar cortes al cambiar de vista */

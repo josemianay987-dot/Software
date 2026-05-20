@@ -4,32 +4,45 @@
 import { Briefcase, Code, Mail, Heart, Target, Sparkles } from "lucide-react";
 import PublicShell from "@/components/PublicShell";
 
-// Datos placeholder — el usuario los reemplazará con la info real.
-// Las fotos usan pravatar.cc (servicio público de avatares de ejemplo).
+// Fotos del equipo en /public/team/  (Next.js sirve estáticos desde ahí).
+// Para añadir las que faltan (Jose, Marinelly): copia `nombre.jpeg` a
+// `frontend/public/team/` y reemplaza la URL placeholder por
+// `/team/nombre.jpeg`. Lo ideal: 800×800 o más, cuadrada, rostro centrado.
+//
+// `focus` controla `object-position` por si la cara no está centrada:
+//   "center" (default), "top", "bottom", "left", "right",
+//   o un valor custom CSS como "50% 30%".
+// Orden del equipo: Selenis al centro (rol de Producto/Pedagogía como eje
+// que une Backend e Interfaz).
 const TEAM = [
   {
     name: "Jose",
     role: "Backend & IA",
     bio: "Arquitectura de la API, integración con Gemini Vision y motor de calificación masiva.",
-    photo: "https://i.pravatar.cc/400?img=12",
+    photo: "/team/jose.jpeg",
+    // Foto vertical (1122×1402, aspecto 4:5). Sesgamos un poco hacia arriba
+    // para que la cara quede centrada al recortar a círculo.
+    focus: "center 25%",
     color: "indigo",
     social: { linkedin: "#", github: "#", email: "jose@example.com" },
-  },
-  {
-    name: "Marinelly",
-    role: "Frontend & UX",
-    bio: "Diseño de los portales docente y estudiante, sistema de animaciones y experiencia de usuario.",
-    photo: "https://i.pravatar.cc/400?img=47",
-    color: "violet",
-    social: { linkedin: "#", github: "#", email: "marinelly@example.com" },
   },
   {
     name: "Selenis",
     role: "Producto & Pedagogía",
     bio: "Curaduría pedagógica de los flujos, mensajería entre docente y estudiante, calendario académico.",
-    photo: "https://i.pravatar.cc/400?img=45",
+    photo: "/team/selenis.jpeg",
+    focus: "center",   // cuadrada 1254×1254 — perfecto centrado
     color: "emerald",
     social: { linkedin: "#", github: "#", email: "selenis@example.com" },
+  },
+  {
+    name: "Marinelly",
+    role: "Frontend & UX",
+    bio: "Diseño de los portales docente y estudiante, sistema de animaciones y experiencia de usuario.",
+    photo: "/team/marinelly.jpeg",
+    focus: "center 30%",  // 1377×1142 — leve sesgo hacia arriba
+    color: "violet",
+    social: { linkedin: "#", github: "#", email: "marinelly@example.com" },
   },
 ];
 
@@ -107,14 +120,19 @@ export default function SobreNosotrosPage() {
                   style={{ animationDelay: `${i * 100}ms` }}
                   className="bg-white dark:bg-slate-900 rounded-3xl p-7 border border-slate-200 dark:border-slate-700 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all animate-springIn [animation-fill-mode:both]"
                 >
-                  {/* Foto con anillo del color del integrante */}
+                  {/* Foto con anillo del color del integrante.
+                      object-cover + objectPosition asegura que la cara quede centrada
+                      sin importar la proporción original de la foto. */}
                   <div className="flex justify-center mb-5">
                     <div className={`p-1.5 rounded-full bg-gradient-to-br shadow-lg ${c.ring}`}>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={m.photo}
                         alt={m.name}
-                        className="w-32 h-32 rounded-full object-cover border-4 border-white dark:border-slate-900"
+                        loading="lazy"
+                        decoding="async"
+                        style={{ objectPosition: m.focus || "center" }}
+                        className="w-36 h-36 rounded-full object-cover border-4 border-white dark:border-slate-900 select-none"
                       />
                     </div>
                   </div>

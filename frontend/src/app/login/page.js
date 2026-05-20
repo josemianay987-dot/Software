@@ -107,6 +107,11 @@ export default function GradeTable() {
   const [editValues, setEditValues] = useState({ full_name: "", score: "" });
   const [aiError, setAiError] = useState(null);
   const [selectedSubject, setSelectedSubject] = useState("Matemáticas");
+  // --- MODO CALIFICADOR: "ia" (Gemini) | "omr" (lector de burbujas) ---
+  const [graderMode, setGraderMode] = useState("omr");
+  const [omrNumQ, setOmrNumQ] = useState(25);
+  const [omrKey, setOmrKey] = useState({}); // { 1:"A", 2:"C", ... }
+  const [downloadingSheet, setDownloadingSheet] = useState(false);
   const [examStats, setExamStats] = useState(null);
   const [showStats, setShowStats] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -440,6 +445,92 @@ export default function GradeTable() {
     }
   };
 
+  // === OMR: descargar plantilla de hoja de respuestas (PDF) ===
+  const downloadAnswerSheet = async () => {
+    setDownloadingSheet(true);
+    try {
+      const blob = await api.getBlob(`/answer-sheet?questions=${omrNumQ}`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `hoja-respuestas-${omrNumQ}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setAiError("No se pudo descargar la plantilla. ¿Backend activo?");
+    } finally {
+      setDownloadingSheet(false);
+    }
+  };
+
+  // === OMR: marcar la clave de respuestas correcta por pregunta ===
+  const setKeyAnswer = (q, letter) =>
+    setOmrKey((prev) => ({ ...prev, [q]: prev[q] === letter ? undefined : letter }));
+
+  // === OMR: subir hojas y calificar localmente (rápido) ===
+  const handleOmrUpload = async () => {
+    if (!examFile) return;
+    const answered = Object.values(omrKey).filter(Boolean).length;
+    if (answered < omrNumQ) {
+      setAiError(`Completa la clave de respuestas: faltan ${omrNumQ - answered} de ${omrNumQ} preguntas.`);
+      return;
+    }
+    setIsAnalyzing(true);
+    setAiError(null);
+    const formData = new FormData();
+    formData.append("file", examFile);
+    formData.append("answer_key", JSON.stringify(omrKey));
+    formData.append("subject", selectedSubject);
+    formData.append("grade", selectedGrade);
+    formData.append("grupo", selectedGrupo);
+    if (selectedPeriodo) formData.append("period_id", selectedPeriodo);
+    try {
+      const data = await api.postForm(`/upload-exams-omr`, formData);
+      // Adaptar al formato que usa el modal de resultados
+      const mapped = (data.analisis || []).map((r, i) => ({
+        full_name: r.full_name || `Hoja ${r.page || i + 1}`,
+        score: r.score,
+        level: r.level,
+        correct: r.correct,
+        total: r.total,
+        aligned: r.aligned,
+        answers: r.answers,
+      }));
+      setAiResults(mapped);
+
+      // Estadísticas por pregunta calculadas localmente (sin llamada extra)
+      const totalStud = mapped.length;
+      if (totalStud > 0) {
+        const errorsPerQ = {};
+        for (let q = 1; q <= omrNumQ; q++) errorsPerQ[q] = 0;
+        mapped.forEach((r) =>
+          (r.answers || []).forEach((a) => {
+            if (!a.is_correct && errorsPerQ[a.q] !== undefined) errorsPerQ[a.q]++;
+          }),
+        );
+        const stats = Object.entries(errorsPerQ).map(([q, errs]) => ({
+          question: Number(q),
+          errors: errs,
+          error_rate: Math.round((errs / totalStud) * 1000) / 10,
+        }));
+        const hardest = [...stats].filter((s) => s.errors > 0).sort((a, b) => b.errors - a.errors).slice(0, 5);
+        setExamStats({ subject: selectedSubject, total_students: totalStud, stats, hardest_questions: hardest });
+        setShowStats(false);
+      }
+
+      setShowAiModal(true);
+      setExamFile(null);
+    } catch (e) {
+      setAiError(
+        e instanceof ApiError && e.status === 0
+          ? "No se pudo conectar con el servidor."
+          : `Error: ${e instanceof ApiError ? e.message : "desconocido"}`,
+      );
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setIsLoggingIn(true);
@@ -473,7 +564,8 @@ export default function GradeTable() {
     localStorage.removeItem("mocavi_token");
     setIsAuthenticated(false);
     setStudents([]);
-    router.push("/");
+    // Al cerrar sesión volvemos al portal de logins (no al landing público)
+    router.push("/login");
   };
 
   const totalStudents = students.length;
@@ -641,7 +733,15 @@ export default function GradeTable() {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex items-center justify-center p-6 font-sans">
         <div className="w-full max-w-md animate-springIn">
-          <div className="flex justify-end mb-3">
+          <div className="flex items-center justify-between mb-3">
+            <button
+              type="button"
+              onClick={() => router.push("/")}
+              className="flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors active:scale-95"
+              title="Volver al inicio"
+            >
+              <ArrowLeft size={14} /> Volver al inicio
+            </button>
             <ThemeToggle />
           </div>
 
@@ -1109,16 +1209,37 @@ export default function GradeTable() {
                     <FileText size={24} className="text-white" />
                   </div>
                   <h2 className="text-2xl font-black tracking-tight uppercase">
-                    Calificador Masivo IA
+                    Calificador Masivo
                   </h2>
                 </div>
+
+                {/* Toggle de modo: OMR (rápido) / IA (Gemini) */}
+                <div className="inline-flex bg-white/10 backdrop-blur rounded-2xl p-1 mb-5 gap-1">
+                  <button
+                    onClick={() => { setGraderMode("omr"); setAiError(null); }}
+                    className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                      graderMode === "omr" ? "bg-white text-indigo-700 shadow" : "text-white/80 hover:text-white"
+                    }`}
+                  >
+                    ⚡ Lector OMR
+                  </button>
+                  <button
+                    onClick={() => { setGraderMode("ia"); setAiError(null); }}
+                    className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                      graderMode === "ia" ? "bg-white text-indigo-700 shadow" : "text-white/80 hover:text-white"
+                    }`}
+                  >
+                    🤖 IA Gemini
+                  </button>
+                </div>
+
                 <p className="text-indigo-100 text-sm mb-6 max-w-md font-medium">
-                  Sube un archivo con los exámenes de todo el grupo.
-                  Identificará los nombres, las respuestas y calculará las notas
-                  automáticamente.
+                  {graderMode === "omr"
+                    ? "Lee las burbujas A/B/C/D al instante (≈30 ms por hoja), sin internet ni coste. Descarga la hoja estándar, marca la clave de respuestas y sube las hojas escaneadas o fotografiadas."
+                    : "La IA identifica nombres, respuestas y notas automáticamente. Útil para exámenes escritos a mano o sin formato fijo."}
                 </p>
 
-                {/* Selector de materia */}
+                {/* Selector de materia (común) */}
                 <div className="mb-5">
                   <label className="text-indigo-200 text-[10px] font-bold uppercase tracking-widest block mb-2">
                     Materia del Examen
@@ -1135,12 +1256,79 @@ export default function GradeTable() {
                         </option>
                       ))}
                     </select>
-                    <ChevronDown
-                      size={14}
-                      className="absolute right-3 top-3.5 text-white/70 pointer-events-none"
-                    />
+                    <ChevronDown size={14} className="absolute right-3 top-3.5 text-white/70 pointer-events-none" />
                   </div>
                 </div>
+
+                {/* === Controles exclusivos del modo OMR === */}
+                {graderMode === "omr" && (
+                  <div className="mb-5 bg-white/10 backdrop-blur rounded-2xl p-4 space-y-4">
+                    <div className="flex flex-wrap items-end gap-4">
+                      <div>
+                        <label className="text-indigo-200 text-[10px] font-bold uppercase tracking-widest block mb-1.5">
+                          N° de preguntas
+                        </label>
+                        <input
+                          type="number" min={1} max={30} value={omrNumQ}
+                          onChange={(e) => {
+                            const n = Math.max(1, Math.min(30, parseInt(e.target.value) || 1));
+                            setOmrNumQ(n);
+                            // limpiar claves fuera de rango
+                            setOmrKey((prev) => {
+                              const next = {};
+                              for (let q = 1; q <= n; q++) if (prev[q]) next[q] = prev[q];
+                              return next;
+                            });
+                          }}
+                          className="w-24 bg-white/15 border border-white/20 text-white font-bold text-sm px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-white/40"
+                        />
+                      </div>
+                      <button
+                        onClick={downloadAnswerSheet}
+                        disabled={downloadingSheet}
+                        className="flex items-center gap-2 bg-white/15 hover:bg-white/25 text-white font-black text-xs uppercase tracking-widest px-4 py-2.5 rounded-xl transition-all active:scale-95"
+                      >
+                        {downloadingSheet ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                        Descargar hoja
+                      </button>
+                      <span className="text-indigo-200 text-[11px]">
+                        Clave marcada: {Object.values(omrKey).filter(Boolean).length}/{omrNumQ}
+                      </span>
+                    </div>
+
+                    {/* Editor de clave de respuestas */}
+                    <div>
+                      <label className="text-indigo-200 text-[10px] font-bold uppercase tracking-widest block mb-2">
+                        Clave de respuestas correctas
+                      </label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 max-h-52 overflow-y-auto pr-1">
+                        {Array.from({ length: omrNumQ }).map((_, i) => {
+                          const q = i + 1;
+                          return (
+                            <div key={q} className="flex items-center gap-1.5 bg-white/5 rounded-lg px-2 py-1.5">
+                              <span className="text-white/70 text-[11px] font-black w-5 text-right">{q}</span>
+                              <div className="flex gap-1">
+                                {["A", "B", "C", "D"].map((L) => (
+                                  <button
+                                    key={L}
+                                    onClick={() => setKeyAnswer(q, L)}
+                                    className={`w-6 h-6 rounded-md text-[11px] font-black transition-all ${
+                                      omrKey[q] === L
+                                        ? "bg-emerald-400 text-emerald-950 scale-105"
+                                        : "bg-white/15 text-white/80 hover:bg-white/30"
+                                    }`}
+                                  >
+                                    {L}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex flex-col md:flex-row gap-4">
                   <input
@@ -1152,18 +1340,21 @@ export default function GradeTable() {
                   />
                   <label
                     htmlFor="examUpload"
+                    onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add("ring-2","ring-emerald-300"); }}
+                    onDragLeave={(e) => e.currentTarget.classList.remove("ring-2","ring-emerald-300")}
+                    onDrop={(e) => { e.preventDefault(); e.currentTarget.classList.remove("ring-2","ring-emerald-300"); const f=e.dataTransfer?.files?.[0]; if(f) setExamFile(f); }}
                     className="flex-1 flex items-center justify-center gap-3 bg-white/10 hover:bg-white/20 backdrop-blur-md border-2 border-white/20 border-dashed rounded-2xl py-4 px-6 cursor-pointer transition-all active:scale-95 group/label"
                   >
                     <UploadCloud className="text-indigo-200 group-hover/label:text-white transition-colors" />
                     <span className="font-bold text-sm truncate">
-                      {examFile ? examFile.name : "Seleccionar exámenes..."}
+                      {examFile ? examFile.name : (graderMode === "omr" ? "Subir hojas escaneadas / foto..." : "Seleccionar exámenes...")}
                     </span>
                   </label>
 
                   <button
                     onClick={() => {
                       setAiError(null);
-                      handleBulkUpload();
+                      graderMode === "omr" ? handleOmrUpload() : handleBulkUpload();
                     }}
                     disabled={!examFile || isAnalyzing}
                     className="flex-[0.5] bg-emerald-500 hover:bg-emerald-400 disabled:bg-indigo-800 disabled:text-indigo-400 text-white font-black py-4 px-8 rounded-2xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-3 uppercase text-xs tracking-widest"
@@ -1171,10 +1362,10 @@ export default function GradeTable() {
                     {isAnalyzing ? (
                       <>
                         <Loader2 className="animate-spin" size={18} />
-                        Analizando...
+                        {graderMode === "omr" ? "Leyendo..." : "Analizando..."}
                       </>
                     ) : (
-                      "Iniciar IA"
+                      graderMode === "omr" ? "Calificar hojas" : "Iniciar IA"
                     )}
                   </button>
                 </div>

@@ -1,0 +1,34 @@
+# Render.com — despliegue del backend KNOWTIFY
+# Para usar: subir el repo a GitHub, crear cuenta en Render,
+# "New +" → "Blueprint" → seleccionar el repo. Render leerá este archivo.
+services:
+  - type: web
+    name: knowtify-backend
+    runtime: python
+    plan: free
+    # rootDir aplica si el backend está en una subcarpeta (nuestro caso)
+    rootDir: edu-grade-mocavi
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /docs
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: ENVIRONMENT
+        value: production
+      # Las claves sensibles las introduces en el dashboard de Render
+      # (no las commitees aquí). DATABASE_URL la puedes vincular
+      # automáticamente desde un servicio Neon o desde Render mismo.
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: JWT_SECRET_KEY
+        generateValue: true   # Render genera uno aleatorio y seguro
+      - key: JWT_EXPIRATION_MINUTES
+        value: "1440"
+      - key: ALLOWED_ORIGINS
+        # Se actualiza al URL de Vercel cuando el frontend esté listo.
+        # Acepta lista separada por comas: https://app1.vercel.app,https://www.midominio.com
+        sync: false

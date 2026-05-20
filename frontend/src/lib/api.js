@@ -79,6 +79,16 @@ export const api = {
   del:  (path, opts) => request(path, { ...opts, method: "DELETE" }),
   // Para multipart/form-data (sin Content-Type manual: lo pone el navegador con boundary)
   postForm: (path, formData, opts) => request(path, { ...opts, method: "POST", body: formData, isForm: true }),
+  // Descarga binaria autenticada (PDF, imágenes…). Devuelve un Blob.
+  async getBlob(path) {
+    const token = getToken();
+    const res = await fetch(`${BASE}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (res.status === 401) { emitUnauthorized(); throw new ApiError("Sesión expirada", { status: 401 }); }
+    if (!res.ok) throw new ApiError("No se pudo descargar", { status: res.status });
+    return res.blob();
+  },
 };
 
 export function isLoggedIn() {

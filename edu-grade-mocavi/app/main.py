@@ -2,9 +2,10 @@ from google import genai
 from google.genai import types
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, status, Request
 from fastapi.security import HTTPBearer
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from . import models, schemas, database, auth
+from . import models, schemas, database, auth, omr
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from slowapi import Limiter
@@ -652,6 +653,130 @@ Responde ÚNICAMENTE con JSON válido:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al procesar examen"
         )
+
+
+# ====================================================================
+# CALIFICADOR OMR (lectura local de burbujas con OpenCV)
+# - Velocidad ~30 ms/hoja, sin IA, sin coste, offline.
+# - El feedback IA es opcional y se puede pedir aparte.
+# ====================================================================
+
+@app.get("/answer-sheet")
+def answer_sheet(
+    questions: int = 25,
+    options: int = 4,
+    current_user: dict = Depends(auth.get_current_teacher),
+):
+    """
+    Genera la hoja de respuestas estándar (PDF) para imprimir.
+    Las burbujas quedan exactamente donde el lector OMR las espera.
+    """
+    questions = max(1, min(questions, 30))   # 2 columnas × 15
+    options = max(2, min(options, 5))
+    pdf_bytes = omr.render_answer_sheet(num_q=questions, num_opts=options)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="hoja-respuestas-{questions}.pdf"'},
+    )
+
+
+def _level_for(score: float) -> str:
+    return (
+        "SUPERIOR" if score >= 4.6 else
+        "ALTO"     if score >= 4.0 else
+        "BÁSICO"   if score >= 3.0 else
+        "BAJO"
+    )
+
+
+@app.post("/upload-exams-omr")
+@limiter.limit("30/minute")
+async def upload_exams_omr(
+    request: Request,
+    file: UploadFile = File(...),
+    answer_key: str = Form(...),
+    subject: str = Form("Matemáticas"),
+    grade: Optional[str] = Form(None),
+    grupo: Optional[str] = Form(None),
+    period_id: Optional[int] = Form(None),
+    current_user: dict = Depends(auth.get_current_teacher),
+    db: Session = Depends(database.get_db),
+):
+    """
+    Califica hojas de respuesta OMR (opción múltiple) leyendo las burbujas
+    localmente con OpenCV. Una página = un estudiante. Devuelve una nota por
+    página al instante. NO usa IA (rápido y gratis).
+
+    answer_key: JSON {"1":"A","2":"D",...}
+    """
+    content = await file.read()
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Archivo demasiado grande (máx 20MB)")
+
+    ct = (file.content_type or "").lower()
+    if ct and ct not in {"image/png", "image/jpeg", "image/jpg", "image/webp", "application/pdf"}:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Solo imágenes (PNG/JPG/WEBP) o PDF")
+
+    try:
+        key = json.loads(answer_key)
+    except Exception:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "answer_key no es JSON válido")
+    if not key:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "answer_key vacío")
+
+    # Normalizar clave: {int: "A"}
+    key_norm = {int(k): str(v).strip().upper() for k, v in key.items()}
+    num_q = max(key_norm.keys())
+
+    # Leer marcas (puede tardar ~30 ms/página, lo hacemos en hilo)
+    try:
+        pages = await asyncio.to_thread(omr.read_marks, content, ct, num_q, 4)
+    except Exception as e:
+        logger.error(f"OMR error: {e}")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "No se pudo leer la hoja. Verifica que sea la hoja estándar y la foto esté completa.")
+
+    db_exam = models.Exam(
+        title=f"OMR {subject} — Grado {grade} Grupo {grupo} P{period_id}",
+        subject=subject, grade=grade, grupo=grupo,
+        period_id=period_id, answer_key=key_norm, total_questions=num_q,
+    )
+    db.add(db_exam)
+    db.flush()
+
+    resultados = []
+    for pg in pages:
+        marks = pg["answers"]            # {q: "A"|None}
+        answers_detail = []
+        correct = 0
+        for q in range(1, num_q + 1):
+            sel = marks.get(q)
+            corr = key_norm.get(q)
+            is_ok = sel is not None and sel == corr
+            if is_ok:
+                correct += 1
+            answers_detail.append({
+                "q": q, "selected": sel, "correct": corr, "is_correct": is_ok,
+            })
+        score = round(correct / num_q * 4 + 1, 2) if num_q else 1.0  # escala 1.0–5.0
+        resultados.append({
+            "page": pg["page"],
+            "aligned": pg["aligned"],
+            "score": score,
+            "level": _level_for(score),
+            "correct": correct,
+            "total": num_q,
+            "answers": answers_detail,
+            "full_name": None,   # OMR no lee el nombre; se asigna después
+        })
+
+    db.commit()
+    return {
+        "exam_id": str(db_exam.id),
+        "engine": "omr",
+        "pages": len(resultados),
+        "analisis": resultados,
+    }
 
 
 # --- EXÁMENES: listar y estadísticas ---

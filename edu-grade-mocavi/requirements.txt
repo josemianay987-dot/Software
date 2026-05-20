@@ -11,3 +11,6 @@ PyJWT==2.8.1
 bcrypt==4.1.1
 slowapi==0.1.9
 python-multipart==0.0.6
+opencv-python-headless==4.13.0.92   # OMR — lectura de burbujas
+numpy==2.4.4                          # OMR
+pymupdf==1.27.2.3                     # OMR — PDF→imagen + generar plantilla
