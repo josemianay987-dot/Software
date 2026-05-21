@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import ThemeToggle from "@/components/ThemeToggle";
+import HelpTip from "@/components/HelpTip";
 import { api, ApiError } from "@/lib/api";
 import {
   GraduationCap,
@@ -897,8 +898,9 @@ export default function GradeTable() {
               <GraduationCap size={28} />
             </div>
             <div>
-              <h1 className="text-2xl font-black text-slate-800 dark:text-white uppercase tracking-tight">
+              <h1 className="text-2xl font-black text-slate-800 dark:text-white uppercase tracking-tight flex items-center gap-2">
                 KNOWTIFY
+                <HelpTip variant="info" side="bottom" title="¿Cómo me muevo aquí?" text="Arriba ves las tarjetas de resumen (estudiantes, promedio, riesgo). Usa las pestañas Notas, Calificar y Calendario para cambiar de sección. Elige la clase activa (grado, grupo y periodo) antes de trabajar. Abajo a la derecha tienes los Mensajes." />
               </h1>
               <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">
                 Grado {selectedGrade}-{selectedGrupo} •{" "}
@@ -1063,8 +1065,9 @@ export default function GradeTable() {
               <AlertTriangle size={24} />
             </div>
             <div>
-              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">
+              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
                 Riesgo
+                <HelpTip text="Estudiantes con desempeño BAJO (nota final menor a 3.0) en el periodo seleccionado. Conviene reforzar con ellos." />
               </p>
               <h3 className="text-2xl font-black">{studentsAtRisk}</h3>
             </div>
@@ -1072,14 +1075,11 @@ export default function GradeTable() {
         </div>
 
         {/* ===== TABS ===== */}
-        <div className="flex gap-2 mb-6">
+        <div className="flex flex-wrap items-center gap-2 mb-6">
           {[
-            { id: "notas", label: "Notas", icon: <BookOpen size={15} /> },
-            {
-              id: "calendario",
-              label: "Calendario",
-              icon: <CalendarDays size={15} />,
-            },
+            { id: "notas", label: "Notas", icon: <BookOpen size={15} />, help: "Registra y consulta las calificaciones de cada estudiante por periodo." },
+            { id: "calificar", label: "Calificar", icon: <FlaskConical size={15} />, help: "Califica exámenes en lote: lector OMR de burbujas (rápido) o análisis con IA." },
+            { id: "calendario", label: "Calendario", icon: <CalendarDays size={15} />, help: "Programa evaluaciones, actividades y eventos. Verás recordatorios de los próximos 7 días." },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1097,13 +1097,14 @@ export default function GradeTable() {
                   {upcomingEvents.length}
                 </span>
               )}
+              <HelpTip text={tab.help} tone={activeTab === tab.id ? "white" : "slate"} side="right" />
             </button>
           ))}
         </div>
 
-        {activeTab === "notas" && (
+        {(activeTab === "notas" || activeTab === "calificar") && (
           <div key="tab-notas" className="view-enter">
-            {/* --- SELECTOR DE GRADO Y SECCIÓN --- */}
+            {/* --- SELECTOR DE GRADO Y SECCIÓN (común a Notas y Calificar) --- */}
             <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-8 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-wrap items-center gap-6">
               <div className="flex items-center gap-2 shrink-0">
                 <div className="bg-violet-100 dark:bg-violet-900/30 p-2 rounded-xl text-violet-600 dark:text-violet-400">
@@ -1112,6 +1113,7 @@ export default function GradeTable() {
                 <span className="font-black text-sm uppercase tracking-wider text-slate-700 dark:text-slate-300">
                   Clase Activa
                 </span>
+                <HelpTip text="Elige el grado, grupo y periodo sobre los que vas a trabajar. Todo lo que hagas en Notas y Calificar se aplica a esta clase." side="right" />
               </div>
 
               <div className="flex flex-wrap items-end gap-4 flex-1">
@@ -1198,7 +1200,8 @@ export default function GradeTable() {
               </div>
             </div>
 
-            {/* --- NUEVO: CALIFICADOR MASIVO IA --- */}
+            {/* ====== PESTAÑA CALIFICAR: panel del calificador masivo ====== */}
+            {activeTab === "calificar" && (
             <div className="mb-8 p-8 bg-gradient-to-br from-indigo-700 via-indigo-600 to-violet-700 rounded-[2rem] text-white shadow-xl shadow-indigo-500/20 dark:shadow-indigo-900/40 ring-1 ring-indigo-500/20 dark:ring-indigo-400/10 relative overflow-hidden group">
               <div className="absolute top-0 right-0 p-10 opacity-10 group-hover:scale-110 transition-transform duration-500">
                 <UploadCloud size={120} />
@@ -1385,7 +1388,11 @@ export default function GradeTable() {
                 )}
               </div>
             </div>
+            )}
+            {/* ====== fin PESTAÑA CALIFICAR ====== */}
 
+            {/* ====== PESTAÑA NOTAS: inscribir + tabla ====== */}
+            {activeTab === "notas" && (<>
             {/* Registro Individual */}
             <div className="my-6">
               {!isAdding ? (
@@ -1422,6 +1429,7 @@ export default function GradeTable() {
                       </>
                     )}
                   </label>
+                  <HelpTip text="Sube un .xlsx o .csv con columnas de nombre, documento y (opcional) correo. KNOWTIFY detecta las columnas automáticamente e inscribe a todos en la clase activa." side="right" />
                 </div>
               ) : (
                 <form
@@ -1480,18 +1488,33 @@ export default function GradeTable() {
               )}
             </div>
 
-            {/* Tabla */}
-            <div className="bg-white dark:bg-slate-900 shadow-xl rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700">
+            {/* Tabla (sin overflow-hidden para no recortar los tooltips de ayuda) */}
+            <div className="bg-white dark:bg-slate-900 shadow-xl rounded-2xl border border-slate-200 dark:border-slate-700">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 text-slate-400 text-xs font-bold uppercase">
-                    <th className="p-4">Estudiante</th>
-                    <th className="p-4 text-center">Saber</th>
-                    <th className="p-4 text-center">Hacer</th>
-                    <th className="p-4 text-center">Ser</th>
-                    <th className="p-4 text-center">Final</th>
-                    <th className="p-4">Desempeño</th>
-                    <th className="p-4 text-center">Acciones</th>
+                    <th className="p-4 rounded-tl-2xl">Estudiante</th>
+                    <th className="p-4 text-center">
+                      <span className="inline-flex items-center gap-1 justify-center">Saber
+                        <HelpTip text="Dimensión cognitiva: dominio de conceptos y conocimientos (escala 1.0 a 5.0)." /></span>
+                    </th>
+                    <th className="p-4 text-center">
+                      <span className="inline-flex items-center gap-1 justify-center">Hacer
+                        <HelpTip text="Dimensión procedimental: aplicación práctica y resolución (escala 1.0 a 5.0)." /></span>
+                    </th>
+                    <th className="p-4 text-center">
+                      <span className="inline-flex items-center gap-1 justify-center">Ser
+                        <HelpTip text="Dimensión actitudinal: responsabilidad, participación y valores (escala 1.0 a 5.0)." /></span>
+                    </th>
+                    <th className="p-4 text-center">
+                      <span className="inline-flex items-center gap-1 justify-center">Final
+                        <HelpTip text="Promedio automático de Saber, Hacer y Ser. Se guarda al pulsar el botón guardar de la fila." /></span>
+                    </th>
+                    <th className="p-4">
+                      <span className="inline-flex items-center gap-1">Desempeño
+                        <HelpTip text="SUPERIOR ≥ 4.6 · ALTO ≥ 4.0 · BÁSICO ≥ 3.0 · BAJO < 3.0" /></span>
+                    </th>
+                    <th className="p-4 text-center rounded-tr-2xl">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1563,9 +1586,12 @@ export default function GradeTable() {
             <p className="mt-6 text-center text-slate-400 text-[10px] font-bold uppercase tracking-[0.2em]">
               KNOWTIFY v2.0 • Jose - Selenis - Marinelly Dev Studio © 2026
             </p>
+            </>)}
+            {/* ====== fin PESTAÑA NOTAS ====== */}
 
             {/* ══════════════════════════════════════════════════════════
              PANEL COMBINADO: Estadísticas (izq) + Resultados IA (der)
+             (modales — disponibles desde cualquier pestaña)
         ══════════════════════════════════════════════════════════ */}
             {showAiModal && (
               <div

@@ -16,6 +16,7 @@ import {
   Bot,
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
+import HelpTip from "@/components/HelpTip";
 
 const levelColor = (l) =>
   l === "SUPERIOR" ? "bg-emerald-500"
@@ -136,7 +137,10 @@ export default function EstudianteDashboard() {
               <GraduationCap size={26} className="text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">KNOWTIFY</h1>
+              <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-1.5">
+                KNOWTIFY
+                <HelpTip variant="info" side="bottom" title="¿Cómo me muevo aquí?" text="Arriba ves tu promedio y nivel. Abajo, tus periodos con el detalle de cada examen. Con los botones flotantes hablas con el Tutor IA o con tu docente." />
+              </h1>
               <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">
                 Portal Estudiante
               </p>
@@ -167,8 +171,9 @@ export default function EstudianteDashboard() {
               )}
             </div>
             <div className="text-left sm:text-right shrink-0">
-              <p className="text-violet-300 text-xs font-bold uppercase tracking-widest mb-1">
+              <p className="text-violet-300 text-xs font-bold uppercase tracking-widest mb-1 inline-flex items-center gap-1.5 sm:justify-end">
                 Promedio General
+                <HelpTip tone="white" side="right" text="Es el promedio de todas tus notas finales calificadas. La etiqueta de color indica tu nivel actual de desempeño." />
               </p>
               <p className="text-6xl font-black text-white leading-none">{avg ?? "—"}</p>
               {latestLevel && (
@@ -203,6 +208,7 @@ export default function EstudianteDashboard() {
           <h3 className="text-slate-800 dark:text-white font-black text-sm uppercase tracking-widest">
             Historial de Periodos
           </h3>
+          <HelpTip text="Cada tarjeta es un periodo. Pulsa sobre ella para ver el detalle de tus exámenes, el feedback de la IA y en qué fallaste." />
         </div>
 
         {grades.length === 0 ? (
@@ -288,6 +294,7 @@ export default function EstudianteDashboard() {
         <div className="fixed bottom-6 right-6 flex flex-col gap-3 z-40">
           <button
             onClick={() => router.push("/dashboard/estudiante/chat")}
+            title="Tutor IA: resuelve dudas de cualquier materia, 24/7"
             style={{ animationDelay: "120ms" }}
             className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white font-bold text-sm px-5 py-3 rounded-2xl shadow-xl shadow-violet-500/30 transition-all active:scale-95 hover:scale-105 animate-slideUp [animation-fill-mode:both]"
           >
@@ -295,6 +302,7 @@ export default function EstudianteDashboard() {
           </button>
           <button
             onClick={() => { setUnreadMsgs(0); router.push("/dashboard/estudiante/mensajes"); }}
+            title="Mensajes: conversa en privado con tu docente"
             style={{ animationDelay: "200ms" }}
             className="relative flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-5 py-3 rounded-2xl shadow-xl shadow-indigo-500/30 transition-all active:scale-95 hover:scale-105 animate-slideUp [animation-fill-mode:both]"
           >
