@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
 import {
   GraduationCap,
@@ -14,9 +15,14 @@ import {
   MessageCircle,
   ChevronRight,
   Bot,
+  CalendarDays,
+  Clock,
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import HelpTip from "@/components/HelpTip";
+
+// recharts (~120KB) solo cuando hay notas que graficar
+const EvolutionChart = dynamic(() => import("@/components/EvolutionChart"), { ssr: false, loading: () => null });
 
 const levelColor = (l) =>
   l === "SUPERIOR" ? "bg-emerald-500"
@@ -35,6 +41,7 @@ export default function EstudianteDashboard() {
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [unreadMsgs, setUnreadMsgs] = useState(0);
+  const [events, setEvents] = useState([]); // #10 próximos eventos
   const wsRef = useRef(null);
   const docIdRef = useRef(null);
 
@@ -50,7 +57,17 @@ export default function EstudianteDashboard() {
     docIdRef.current = document_id;
     const ctrl = new AbortController();
     api.get(`/student/dashboard`, { signal: ctrl.signal })
-      .then((d) => { setData(d); setIsLoading(false); })
+      .then((d) => {
+        setData(d); setIsLoading(false);
+        // #10 — cargar próximos eventos de su grado/grupo
+        const g = d?.student?.grade, gr = d?.student?.grupo;
+        const qs = new URLSearchParams({ days: "30" });
+        if (g) qs.set("grade", g);
+        if (gr) qs.set("grupo", gr);
+        api.get(`/events/upcoming?${qs}`, { signal: ctrl.signal })
+          .then((ev) => setEvents(Array.isArray(ev) ? ev : []))
+          .catch(() => {});
+      })
       .catch((e) => { if (e?.name !== "AbortError") router.push("/login"); });
     return () => ctrl.abort();
   }, [router]);
@@ -126,6 +143,15 @@ export default function EstudianteDashboard() {
   const bestGrade = graded.length > 0 ? Math.max(...graded.map((g) => g.final_period_score)) : null;
   const latestLevel = graded.length > 0 ? graded[graded.length - 1].performance_level : null;
 
+  // #6 — datos para la gráfica de evolución
+  const chartData = graded.map((g) => ({ label: `P${g.period_id}`, nota: g.final_period_score }));
+
+  // #10 — colores por tipo de evento
+  const evTypeColor = {
+    evaluacion: "bg-rose-500", actividad: "bg-amber-500", evento: "bg-indigo-500", otro: "bg-slate-400",
+  };
+  const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 p-4 md:p-6 font-sans">
       <div className="max-w-6xl mx-auto">
@@ -199,6 +225,58 @@ export default function EstudianteDashboard() {
                 </p>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* #6 Evolución + #10 Próximos eventos */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          {/* Gráfica de evolución */}
+          <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm">
+            <div className="flex items-center gap-2 mb-4">
+              <TrendingUp size={16} className="text-violet-500 dark:text-violet-400" />
+              <h3 className="text-slate-800 dark:text-white font-black text-sm uppercase tracking-widest">
+                Evolución de tu promedio
+              </h3>
+              <HelpTip text="Tu nota final en cada periodo. La línea naranja punteada marca el 3.0 (aprobación)." />
+            </div>
+            {chartData.length > 0 ? (
+              <EvolutionChart data={chartData} />
+            ) : (
+              <p className="text-slate-400 text-sm py-10 text-center">Aún no hay periodos calificados para graficar.</p>
+            )}
+          </div>
+
+          {/* Próximos eventos */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden flex flex-col">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
+              <CalendarDays size={16} className="text-indigo-500" />
+              <h3 className="text-slate-800 dark:text-white font-black text-sm uppercase tracking-widest">
+                Próximos eventos
+              </h3>
+              <HelpTip text="Evaluaciones y actividades que tu docente programó para tu grado y grupo." />
+            </div>
+            <div className="divide-y divide-slate-100 dark:divide-slate-800 overflow-y-auto max-h-64">
+              {events.length === 0 && (
+                <p className="text-center text-slate-400 text-xs py-10 font-bold">Sin eventos próximos</p>
+              )}
+              {events.map((ev) => {
+                const d = new Date(ev.event_date + "T00:00:00");
+                const daysLeft = Math.round((d - today0) / 86400000);
+                return (
+                  <div key={ev.id} className="flex items-start gap-3 px-5 py-3">
+                    <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${evTypeColor[ev.event_type] || evTypeColor.otro}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate">{ev.title}</p>
+                      <p className="text-[11px] text-slate-400 flex items-center gap-1">
+                        <Clock size={11} />
+                        {daysLeft === 0 ? "Hoy" : daysLeft === 1 ? "Mañana" : `En ${daysLeft} días`}
+                        {" · "}{d.toLocaleDateString("es-CO", { day: "numeric", month: "short" })}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
 

@@ -9,6 +9,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
+# Algunos proveedores (Render, Heroku) entregan la URL con el esquema antiguo
+# "postgres://", que SQLAlchemy 2 ya no acepta. Lo normalizamos a "postgresql://".
+if SQLALCHEMY_DATABASE_URL and SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
+    SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
 # echo de SQL solo si SQL_ECHO=1 (off por defecto incluso en dev,
 # porque saturaba la consola y añadía latencia perceptible)
 SQL_ECHO = os.getenv("SQL_ECHO", "0") == "1"

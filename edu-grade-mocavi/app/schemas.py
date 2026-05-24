@@ -173,3 +173,38 @@ class ChatbotRequest(BaseModel):
 
 class ChatbotResponse(BaseModel):
     reply: str
+
+# ============= GENERADOR DE EXÁMENES IA (#13) =============
+
+class ExamGenRequest(BaseModel):
+    topic: str = Field(..., min_length=3, max_length=400)
+    subject: str = Field(..., min_length=2, max_length=100)
+    questions: int = Field(10, ge=5, le=30)
+    difficulty: str = Field("media", pattern="^(facil|media|dificil)$")
+
+# ============= GUARDAR NOTAS DESDE OMR (#2) =============
+
+class OmrGradeItem(BaseModel):
+    student_id: UUID
+    score: float = Field(..., ge=1.0, le=5.0)
+
+class ApplyOmrRequest(BaseModel):
+    period_id: int = Field(..., ge=1)
+    dimension: str = Field("saber", pattern="^(saber|hacer|ser)$")
+    items: List[OmrGradeItem]
+
+# ============= CAMBIO DE CONTRASEÑA (#27) =============
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=100)
+    new_password: str = Field(..., min_length=8, max_length=100)
+
+# ============= NEWSLETTER (Mantente al día) =============
+
+class NewsletterRequest(BaseModel):
+    email: EmailStr
+
+class NewsletterResponse(BaseModel):
+    ok: bool
+    message: str
+    already_subscribed: bool = False

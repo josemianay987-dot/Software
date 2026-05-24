@@ -37,6 +37,8 @@ export default function LandingHero() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 0) {
         setFeedback({ kind: "error", msg: "No se pudo conectar con el servidor." });
+      } else if (err instanceof ApiError && err.status === 422) {
+        setFeedback({ kind: "warn", msg: "Escribe un correo válido (ej. nombre@correo.com)." });
       } else if (err instanceof ApiError && err.status === 429) {
         setFeedback({ kind: "warn", msg: "Demasiados intentos. Espera un momento." });
       } else {

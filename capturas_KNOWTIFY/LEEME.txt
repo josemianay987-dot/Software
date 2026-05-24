@@ -1,0 +1,48 @@
+CAPTURAS DE PANTALLA — KNOWTIFY
+================================
+Imágenes para usar en los informes (fase de diseño y construcción).
+Tomadas de la aplicación en ejecución (modo claro/oscuro y móvil) y del código fuente real.
+
+01_publico/                  Sitio público
+  01_inicio_landing.png      Página de inicio
+  02_login_docente.png       Login — portal docente
+  03_login_estudiante.png    Login — portal estudiante
+  04_sobre_nosotros.png      Sección "Sobre nosotros"
+  05_cursos.png              Sección "Cursos"
+  06_precios.png             Sección "Precios"
+  07_guia.png                Sección "Guía"
+  08_contacto.png            Sección "Contacto"
+  09_demo_animada.png        Demo animada
+  10_inicio_movil.png        Inicio en móvil (responsive)
+
+02_portal_docente/           Portal del docente
+  01_notas.png               Planilla de notas (alertas de color)
+  02_notas_modo_oscuro.png   Planilla en modo oscuro
+  03_calificar_omr.png       Calificador masivo (Lector OMR / IA)
+  04_generador_examen_ia.png Generador de exámenes con IA
+  05_calendario.png          Calendario académico
+
+03_portal_estudiante/        Portal del estudiante
+  01_tablero.png             Tablero de desempeño
+  02_tablero_modo_oscuro.png Tablero en modo oscuro
+  03_tablero_movil.png       Tablero en móvil (responsive)
+  04_detalle_periodo.png     Detalle de notas por periodo (OMR)
+  05_mensajeria.png          Mensajería en tiempo real
+  06_tutor_ia.png            Tutor IA (chat con Markdown)
+
+04_codigo_backend/           Evidencias de código (backend/frontend)
+  01_integracion_gemini.png        Integración de Gemini (visión)
+  02_fuzzy_matching.png            Vinculación elástica de nombres
+  03_calificacion_masiva_omr.png   Lógica de calificación OMR
+  04_modelado_postgresql.png       Modelo de datos (SQLAlchemy)
+  05_endpoints_fastapi.png         Endpoint asíncrono (FastAPI)
+  06_middleware_autenticacion.png  Middleware de roles (JWT)
+  07_websocket_backend.png         WebSocket (backend)
+  08_websocket_frontend.png        WebSocket (frontend)
+  09_despliegue_render.png         Configuración de despliegue (Render)
+
+05_api/                      API REST
+  01_swagger_documentacion.png     Documentación interactiva (Swagger)
+
+06_omr/                      Calificación óptica
+  01_hoja_respuestas.png     Plantilla de hoja de respuestas (OMR)

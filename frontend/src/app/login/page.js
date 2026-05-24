@@ -113,6 +113,24 @@ export default function GradeTable() {
   const [omrNumQ, setOmrNumQ] = useState(25);
   const [omrKey, setOmrKey] = useState({}); // { 1:"A", 2:"C", ... }
   const [downloadingSheet, setDownloadingSheet] = useState(false);
+  // #2 — guardar notas del OMR como calificación
+  const [lastEngine, setLastEngine] = useState(null); // "ia" | "omr"
+  const [omrAssign, setOmrAssign] = useState({});      // { idxHoja: student_id }
+  const [omrDimension, setOmrDimension] = useState("saber");
+  const [omrPeriod, setOmrPeriod] = useState("1");     // periodo donde se guarda el examen OMR
+  const [savingOmr, setSavingOmr] = useState(false);
+  // #27 — cambio de contraseña del docente
+  const [showPwModal, setShowPwModal] = useState(false);
+  const [pwForm, setPwForm] = useState({ current: "", next: "", confirm: "" });
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwMsg, setPwMsg] = useState(null); // { ok, text }
+  // #13 — generador de exámenes con IA
+  const [genTopic, setGenTopic] = useState("");
+  const [genQuestions, setGenQuestions] = useState(10);
+  const [genDifficulty, setGenDifficulty] = useState("media");
+  const [generatingExam, setGeneratingExam] = useState(false);
+  const [generatedExam, setGeneratedExam] = useState(null);
+  const [genError, setGenError] = useState(null);
   const [examStats, setExamStats] = useState(null);
   const [showStats, setShowStats] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -425,6 +443,7 @@ export default function GradeTable() {
     try {
       const data = await api.postForm(`/upload-exams`, formData);
       setAiError(null);
+      setLastEngine("ia");
       setAiResults(data.analisis);
       setShowAiModal(true);
       setExamFile(null);
@@ -484,7 +503,7 @@ export default function GradeTable() {
     formData.append("subject", selectedSubject);
     formData.append("grade", selectedGrade);
     formData.append("grupo", selectedGrupo);
-    if (selectedPeriodo) formData.append("period_id", selectedPeriodo);
+    if (omrPeriod) formData.append("period_id", omrPeriod);
     try {
       const data = await api.postForm(`/upload-exams-omr`, formData);
       // Adaptar al formato que usa el modal de resultados
@@ -496,8 +515,15 @@ export default function GradeTable() {
         total: r.total,
         aligned: r.aligned,
         answers: r.answers,
+        student_id: r.student_id,    // estudiante identificado automáticamente por su nombre
+        identified: !!r.student_id,  // ¿lo reconoció?
       }));
       setAiResults(mapped);
+      setLastEngine("omr");
+      // Prellenar las asignaciones con los estudiantes ya identificados por su nombre
+      const autoAssign = {};
+      mapped.forEach((r, i) => { if (r.student_id) autoAssign[i] = r.student_id; });
+      setOmrAssign(autoAssign);
 
       // Estadísticas por pregunta calculadas localmente (sin llamada extra)
       const totalStud = mapped.length;
@@ -712,6 +738,152 @@ export default function GradeTable() {
       );
     } catch (err) {
       alert(err instanceof ApiError ? `Error al guardar: ${err.message}` : "Error al guardar");
+    }
+  };
+
+  // === #11 Exportar notas ===
+  const claseLabel = `${GRADES.find((g) => g.value === selectedGrade)?.label || selectedGrade} · Grupo ${selectedGrupo} · ${PERIODS.find((p) => p.value === selectedPeriodo)?.label || ""}`;
+
+  const exportNotasCsv = () => {
+    const header = "Estudiante,Saber,Hacer,Ser,Final,Desempeño\n";
+    const rows = students
+      .map((s) => `"${s.name}",${s.saber},${s.hacer},${s.ser},${s.final ?? ""},"${s.level ?? "PENDIENTE"}"`)
+      .join("\n");
+    const blob = new Blob(["﻿" + header + rows], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `notas_${selectedGrade}-${selectedGrupo}_P${selectedPeriodo}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportNotasPdf = () => {
+    const rows = students
+      .map(
+        (s, i) =>
+          `<tr><td>${i + 1}</td><td>${s.name}</td><td style="text-align:center">${s.saber}</td><td style="text-align:center">${s.hacer}</td><td style="text-align:center">${s.ser}</td><td style="text-align:center"><b>${s.final ?? "—"}</b></td><td>${s.level ?? "PENDIENTE"}</td></tr>`,
+      )
+      .join("");
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Notas ${claseLabel}</title>
+      <style>body{font-family:Arial,sans-serif;padding:28px;color:#1e293b}
+      h2{margin-bottom:2px}p{color:#64748b;font-size:13px;margin:0 0 18px}
+      table{width:100%;border-collapse:collapse;font-size:13px}
+      th{background:#eef2ff;color:#3730a3;text-align:left;padding:9px;border-bottom:2px solid #c7d2fe;font-size:11px;text-transform:uppercase}
+      td{padding:8px 9px;border-bottom:1px solid #f1f5f9}
+      tr:nth-child(even) td{background:#f8fafc}</style></head>
+      <body><h2>KNOWTIFY · Reporte de notas</h2>
+      <p>${claseLabel} &middot; Generado el ${new Date().toLocaleDateString("es-CO")} &middot; ${students.length} estudiante(s)</p>
+      <table><thead><tr><th>#</th><th>Estudiante</th><th>Saber</th><th>Hacer</th><th>Ser</th><th>Final</th><th>Desempeño</th></tr></thead>
+      <tbody>${rows}</tbody></table></body></html>`;
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    win.print();
+  };
+
+  // === #27 Cambiar contraseña ===
+  const changePassword = async () => {
+    setPwMsg(null);
+    if (pwForm.next.length < 8) { setPwMsg({ ok: false, text: "La nueva contraseña debe tener al menos 8 caracteres." }); return; }
+    if (pwForm.next !== pwForm.confirm) { setPwMsg({ ok: false, text: "La confirmación no coincide." }); return; }
+    setPwSaving(true);
+    try {
+      await api.post("/change-password", { current_password: pwForm.current, new_password: pwForm.next });
+      setPwMsg({ ok: true, text: "Contraseña actualizada correctamente." });
+      setPwForm({ current: "", next: "", confirm: "" });
+      setTimeout(() => setShowPwModal(false), 1200);
+    } catch (err) {
+      setPwMsg({ ok: false, text: err instanceof ApiError ? err.message : "No se pudo cambiar la contraseña." });
+    } finally {
+      setPwSaving(false);
+    }
+  };
+
+  // === #13 Generar examen con IA ===
+  const generateExam = async () => {
+    if (!genTopic.trim() || generatingExam) return;
+    setGeneratingExam(true);
+    setGenError(null);
+    setGeneratedExam(null);
+    try {
+      const data = await api.post("/ai/generate-exam", {
+        topic: genTopic.trim(),
+        subject: selectedSubject,
+        questions: Number(genQuestions),
+        difficulty: genDifficulty,
+      });
+      setGeneratedExam(data);
+    } catch (err) {
+      setGenError(err instanceof ApiError ? err.message : "No se pudo generar el examen");
+    } finally {
+      setGeneratingExam(false);
+    }
+  };
+
+  // Usar la clave del examen generado en el calificador OMR
+  const useGeneratedKey = () => {
+    if (!generatedExam?.answer_key) return;
+    const key = generatedExam.answer_key;
+    const n = Object.keys(key).length;
+    setOmrNumQ(n);
+    setOmrKey(key);
+    setGraderMode("omr");
+    alert(`Clave de ${n} respuestas cargada en el Lector OMR. Descarga la hoja y aplícala.`);
+  };
+
+  // Imprimir el examen generado (enunciados, sin la clave)
+  const printGeneratedExam = () => {
+    if (!generatedExam) return;
+    const qs = (generatedExam.questions || [])
+      .map(
+        (q) =>
+          `<div class="q"><p class="qt"><b>${q.q}.</b> ${q.text}</p>${Object.entries(q.options || {})
+            .map(([k, v]) => `<p class="opt">${k}) ${v}</p>`)
+            .join("")}</div>`,
+      )
+      .join("");
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${generatedExam.title}</title>
+      <style>body{font-family:Arial,sans-serif;padding:30px;color:#1e293b;max-width:760px;margin:auto}
+      h2{margin-bottom:2px}.sub{color:#64748b;font-size:13px;margin:0 0 8px}
+      .line{margin:14px 0 22px;font-size:13px;color:#475569}
+      .q{margin-bottom:16px}.qt{font-weight:bold;margin:0 0 6px}.opt{margin:2px 0 2px 18px}</style></head>
+      <body><h2>${generatedExam.title}</h2>
+      <p class="sub">${generatedExam.subject} · ${(generatedExam.questions || []).length} preguntas</p>
+      <p class="line">Nombre: _______________________________   Documento: ____________   Fecha: __________</p>
+      ${qs}</body></html>`;
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    win.print();
+  };
+
+  // === #2 Guardar las notas del OMR como calificación del periodo ===
+  const saveOmrGrades = async () => {
+    const items = aiResults
+      .map((r, i) => ({ student_id: omrAssign[i], score: r.score }))
+      .filter((it) => it.student_id); // solo hojas asignadas a un estudiante
+    if (items.length === 0) {
+      alert("Asigna al menos una hoja a un estudiante (columna 'Estudiante').");
+      return;
+    }
+    setSavingOmr(true);
+    try {
+      const res = await api.post("/grades/apply-omr", {
+        period_id: parseInt(omrPeriod),
+        dimension: omrDimension,
+        items,
+      });
+      alert(`✅ ${res.saved} nota(s) guardada(s) en ${omrDimension.toUpperCase()} del periodo ${omrPeriod}.`);
+      fetchData(); // refrescar la tabla de notas
+    } catch (err) {
+      alert(err instanceof ApiError ? `Error: ${err.message}` : "No se pudieron guardar las notas");
+    } finally {
+      setSavingOmr(false);
     }
   };
 
@@ -1026,6 +1198,13 @@ export default function GradeTable() {
             </div>
             <ThemeToggle />
             <button
+              onClick={() => { setPwMsg(null); setPwForm({ current: "", next: "", confirm: "" }); setShowPwModal(true); }}
+              title="Cambiar contraseña"
+              className="p-2 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            >
+              <Lock size={18} />
+            </button>
+            <button
               onClick={handleLogout}
               className="text-slate-400 hover:text-rose-600 font-bold text-xs uppercase tracking-widest transition-colors"
             >
@@ -1034,8 +1213,58 @@ export default function GradeTable() {
           </div>
         </div>
 
-        {/* Dashboard */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 my-8">
+        {/* ===== MODAL CAMBIAR CONTRASEÑA (#27) ===== */}
+        {showPwModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-md animate-overlayIn"
+            onClick={() => setShowPwModal(false)}>
+            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-sm animate-springIn"
+              onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
+                <h3 className="font-black text-slate-800 dark:text-white flex items-center gap-2">
+                  <Lock size={16} className="text-indigo-500" /> Cambiar contraseña
+                </h3>
+                <button onClick={() => setShowPwModal(false)} className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800">
+                  <X size={16} className="text-slate-400" />
+                </button>
+              </div>
+              <div className="px-6 py-5 space-y-3">
+                <input type="password" placeholder="Contraseña actual" value={pwForm.current}
+                  onChange={(e) => setPwForm((f) => ({ ...f, current: e.target.value }))}
+                  className="w-full bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-3 text-sm dark:text-white outline-none focus:ring-2 focus:ring-indigo-500" />
+                <input type="password" placeholder="Nueva contraseña (mín. 8)" value={pwForm.next}
+                  onChange={(e) => setPwForm((f) => ({ ...f, next: e.target.value }))}
+                  className="w-full bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-3 text-sm dark:text-white outline-none focus:ring-2 focus:ring-indigo-500" />
+                <input type="password" placeholder="Confirmar nueva contraseña" value={pwForm.confirm}
+                  onChange={(e) => setPwForm((f) => ({ ...f, confirm: e.target.value }))}
+                  onKeyDown={(e) => e.key === "Enter" && changePassword()}
+                  className="w-full bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-3 text-sm dark:text-white outline-none focus:ring-2 focus:ring-indigo-500" />
+                {pwMsg && (
+                  <p className={`text-sm font-bold ${pwMsg.ok ? "text-emerald-600" : "text-rose-500"}`}>{pwMsg.text}</p>
+                )}
+              </div>
+              <div className="px-6 pb-5 flex gap-3">
+                <button onClick={() => setShowPwModal(false)}
+                  className="flex-1 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-500 font-black text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                  Cancelar
+                </button>
+                <button onClick={changePassword} disabled={pwSaving || !pwForm.current || !pwForm.next}
+                  className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-black text-sm transition-colors flex items-center justify-center gap-2">
+                  {pwSaving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />} Guardar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Dashboard — solo visible en la pestaña Notas (aparece/desaparece suave) */}
+        <div
+          className={`overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] ${
+            activeTab === "notas"
+              ? "max-h-[480px] opacity-100 mt-8 mb-8"
+              : "max-h-0 opacity-0 mt-8 mb-0 pointer-events-none"
+          }`}
+        >
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex items-center gap-4">
             <div className="bg-indigo-100 dark:bg-indigo-900/40 p-3 rounded-xl text-indigo-600">
               <Users size={24} />
@@ -1072,6 +1301,7 @@ export default function GradeTable() {
               <h3 className="text-2xl font-black">{studentsAtRisk}</h3>
             </div>
           </div>
+        </div>
         </div>
 
         {/* ===== TABS ===== */}
@@ -1238,7 +1468,7 @@ export default function GradeTable() {
 
                 <p className="text-indigo-100 text-sm mb-6 max-w-md font-medium">
                   {graderMode === "omr"
-                    ? "Lee las burbujas A/B/C/D al instante (≈30 ms por hoja), sin internet ni coste. Descarga la hoja estándar, marca la clave de respuestas y sube las hojas escaneadas o fotografiadas."
+                    ? "Lee las burbujas A/B/C/D al instante y reconoce el nombre escrito en cada hoja para asignarla sola al estudiante de la clase. Descarga la hoja, marca la clave y sube las hojas escaneadas o fotografiadas."
                     : "La IA identifica nombres, respuestas y notas automáticamente. Útil para exámenes escritos a mano o sin formato fijo."}
                 </p>
 
@@ -1285,6 +1515,21 @@ export default function GradeTable() {
                           }}
                           className="w-24 bg-white/15 border border-white/20 text-white font-bold text-sm px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-white/40"
                         />
+                      </div>
+                      <div>
+                        <label className="text-indigo-200 text-[10px] font-bold uppercase tracking-widest block mb-1.5 flex items-center gap-1.5">
+                          Guardar en periodo
+                          <HelpTip text="El examen calificado se guardará en este periodo y aparecerá en el detalle de notas del estudiante." />
+                        </label>
+                        <select
+                          value={omrPeriod}
+                          onChange={(e) => setOmrPeriod(e.target.value)}
+                          className="bg-white/15 border border-white/20 text-white font-bold text-sm px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-white/40 [&>option]:text-slate-900"
+                        >
+                          {PERIODS.map((p) => (
+                            <option key={p.value} value={p.value}>{p.label}</option>
+                          ))}
+                        </select>
                       </div>
                       <button
                         onClick={downloadAnswerSheet}
@@ -1389,6 +1634,105 @@ export default function GradeTable() {
               </div>
             </div>
             )}
+
+            {/* ====== GENERADOR DE EXÁMENES CON IA (#13) ====== */}
+            {activeTab === "calificar" && (
+            <div className="mb-8 bg-white dark:bg-slate-900 rounded-[2rem] p-7 border border-slate-200 dark:border-slate-700 shadow-sm">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 p-2.5 rounded-xl">
+                  <FlaskConical size={22} />
+                </div>
+                <h2 className="text-xl font-black tracking-tight text-slate-800 dark:text-white">
+                  Generar examen con IA
+                </h2>
+                <HelpTip text="Describe el tema y la IA crea un examen de opción múltiple con su clave de respuestas. Imprímelo y luego usa la clave en el Lector OMR para calificarlo." />
+              </div>
+              <p className="text-slate-500 dark:text-slate-400 text-sm mb-5">
+                Materia: <strong>{selectedSubject}</strong> (cámbiala en el panel de arriba).
+                Genera las preguntas, imprímelas y reutiliza la clave en el calificador OMR.
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+                <input
+                  value={genTopic}
+                  onChange={(e) => setGenTopic(e.target.value)}
+                  placeholder="Tema (ej. ecuaciones de primer grado)"
+                  className="md:col-span-2 bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-2.5 text-sm dark:text-white outline-none focus:ring-2 focus:ring-violet-500"
+                />
+                <div className="relative">
+                  <input
+                    type="number" min={5} max={30} value={genQuestions}
+                    onChange={(e) => setGenQuestions(Math.max(5, Math.min(30, parseInt(e.target.value) || 5)))}
+                    className="w-full bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-2.5 text-sm dark:text-white outline-none focus:ring-2 focus:ring-violet-500"
+                    placeholder="N° preguntas"
+                  />
+                </div>
+                <select
+                  value={genDifficulty}
+                  onChange={(e) => setGenDifficulty(e.target.value)}
+                  className="bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-2.5 text-sm dark:text-white outline-none focus:ring-2 focus:ring-violet-500"
+                >
+                  <option value="facil">Fácil</option>
+                  <option value="media">Media</option>
+                  <option value="dificil">Difícil</option>
+                </select>
+              </div>
+
+              <button
+                onClick={generateExam}
+                disabled={generatingExam || !genTopic.trim()}
+                className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-60 text-white font-black px-6 py-3 rounded-2xl shadow-lg shadow-violet-500/30 transition-all active:scale-95 uppercase text-xs tracking-widest"
+              >
+                {generatingExam ? <><Loader2 size={16} className="animate-spin" /> Generando...</> : <><FlaskConical size={16} /> Generar examen</>}
+              </button>
+
+              {genError && (
+                <div className="mt-4 flex items-center gap-2 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 rounded-xl px-4 py-3 text-sm">
+                  <AlertTriangle size={16} /> {genError}
+                </div>
+              )}
+
+              {generatedExam?.questions?.length > 0 && (
+                <div className="mt-6">
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <h3 className="font-black text-lg text-slate-800 dark:text-white flex items-center gap-2">
+                      <CheckCircle size={18} className="text-emerald-500" /> {generatedExam.title}
+                    </h3>
+                    <div className="flex gap-2">
+                      <button onClick={printGeneratedExam}
+                        className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white text-xs font-black rounded-xl transition-all active:scale-95 uppercase tracking-widest">
+                        <FileText size={14} /> Imprimir
+                      </button>
+                      <button onClick={useGeneratedKey}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl transition-all active:scale-95 uppercase tracking-widest">
+                        <Save size={14} /> Usar clave en OMR
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                    {generatedExam.questions.map((q) => (
+                      <div key={q.q} className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
+                        <p className="font-bold text-sm text-slate-800 dark:text-slate-100 mb-2">
+                          <span className="text-violet-500">{q.q}.</span> {q.text}
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-sm">
+                          {Object.entries(q.options || {}).map(([k, v]) => (
+                            <span key={k} className={`px-2.5 py-1 rounded-lg ${
+                              k === q.correct
+                                ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 font-bold"
+                                : "text-slate-600 dark:text-slate-300"
+                            }`}>
+                              <strong>{k})</strong> {v}{k === q.correct && " ✓"}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            )}
             {/* ====== fin PESTAÑA CALIFICAR ====== */}
 
             {/* ====== PESTAÑA NOTAS: inscribir + tabla ====== */}
@@ -1486,6 +1830,30 @@ export default function GradeTable() {
                   </div>
                 </form>
               )}
+            </div>
+
+            {/* Barra de acciones de la tabla: exportar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
+                Calificaciones
+                <HelpTip text="Edita Saber/Hacer/Ser y guarda con el botón de cada fila. Exporta el listado a Excel o PDF con los botones de la derecha." />
+              </h3>
+              <div className="flex gap-2">
+                <button
+                  onClick={exportNotasCsv}
+                  disabled={students.length === 0}
+                  className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black rounded-xl transition-all active:scale-95 uppercase tracking-widest"
+                >
+                  <Download size={14} /> Excel
+                </button>
+                <button
+                  onClick={exportNotasPdf}
+                  disabled={students.length === 0}
+                  className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-black rounded-xl transition-all active:scale-95 uppercase tracking-widest"
+                >
+                  <FileText size={14} /> PDF
+                </button>
+              </div>
             </div>
 
             {/* Tabla (sin overflow-hidden para no recortar los tooltips de ayuda) */}
@@ -1720,7 +2088,37 @@ export default function GradeTable() {
                                     {i + 1}
                                   </td>
                                   <td className="p-3">
-                                    {editingIdx === i ? (
+                                    {lastEngine === "omr" ? (
+                                      r.identified ? (
+                                        // Identificado automáticamente por el nombre escrito en la hoja
+                                        <div className="flex items-center gap-2">
+                                          <CheckCircle size={15} className="text-emerald-500 shrink-0" />
+                                          <div className="min-w-0">
+                                            <p className="font-bold text-slate-700 dark:text-slate-200 truncate">{r.full_name}</p>
+                                            <p className="text-[10px] text-slate-400">Por nombre · auto</p>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        // No reconocido: el docente asigna manualmente (respaldo)
+                                        <div>
+                                          <select
+                                            value={omrAssign[i] || ""}
+                                            onChange={(e) =>
+                                              setOmrAssign((prev) => ({ ...prev, [i]: e.target.value }))
+                                            }
+                                            className="w-full px-2 py-1.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 dark:text-white rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-bold"
+                                          >
+                                            <option value="">— Hoja {r.full_name?.replace?.("Hoja ", "") || i + 1}: asignar —</option>
+                                            {students.map((s) => (
+                                              <option key={s.id} value={s.id}>{s.name}</option>
+                                            ))}
+                                          </select>
+                                          <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
+                                            Nombre no reconocido · asígnalo a mano
+                                          </p>
+                                        </div>
+                                      )
+                                    ) : editingIdx === i ? (
                                       <input
                                         className="w-full px-2 py-1 bg-slate-100 dark:bg-slate-700 dark:text-white rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-bold"
                                         value={editValues.full_name}
@@ -1819,12 +2217,40 @@ export default function GradeTable() {
                         </table>
                       </div>
 
-                      {/* Footer exportar */}
+                      {/* Footer: guardar como notas (OMR) + exportar */}
                       <div className="px-5 py-4 border-t border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-3 shrink-0">
-                        <p className="text-xs text-slate-400 italic">
-                          Los resultados no se sincronizan con la tabla
-                          principal.
-                        </p>
+                        {lastEngine === "omr" ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 inline-flex items-center gap-1">
+                              Guardar nota en
+                              <HelpTip side="top" text="Los estudiantes se identifican solos por el nombre escrito en la hoja (✓ verde). Solo asigna manualmente los que aparezcan en amarillo. Elige la dimensión; el examen se guarda en el periodo seleccionado en los controles del lector OMR." />
+                            </span>
+                            <select
+                              value={omrDimension}
+                              onChange={(e) => setOmrDimension(e.target.value)}
+                              className="px-3 py-2 bg-slate-100 dark:bg-slate-700 dark:text-white rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                              <option value="saber">Saber</option>
+                              <option value="hacer">Hacer</option>
+                              <option value="ser">Ser</option>
+                            </select>
+                            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-500/15 px-2.5 py-1.5 rounded-lg">
+                              {PERIODS.find((p) => p.value === omrPeriod)?.label ?? `Periodo ${omrPeriod}`}
+                            </span>
+                            <button
+                              onClick={saveOmrGrades}
+                              disabled={savingOmr}
+                              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-sm font-bold rounded-xl transition-all active:scale-95"
+                            >
+                              {savingOmr ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                              Guardar como notas
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-400 italic">
+                            Los resultados no se sincronizan con la tabla principal.
+                          </p>
+                        )}
                         <div className="flex gap-2">
                           <button
                             onClick={exportCsv}

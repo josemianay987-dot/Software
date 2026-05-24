@@ -4,6 +4,7 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Web
 from fastapi.security import HTTPBearer
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from . import models, schemas, database, auth, omr
 from fastapi.middleware.cors import CORSMiddleware
@@ -74,6 +75,16 @@ MODEL_NAME = get_active_model_name()
 # Crear tablas
 models.Base.metadata.create_all(bind=database.engine)
 
+# Datos iniciales en bases de datos nuevas (primer despliegue). Idempotente.
+try:
+    from . import seed
+    _db = database.SessionLocal()
+    if seed.seed_if_empty(_db):
+        logger.info("Datos de demostración creados (docente/Demo2026!).")
+    _db.close()
+except Exception as e:
+    logger.warning(f"No se pudo ejecutar el seed inicial: {e}")
+
 # --- RUTAS DE AUTENTICACIÓN ---
 
 @app.post("/login/teacher", response_model=schemas.TokenResponse)
@@ -139,6 +150,56 @@ def login_student(request: Request, login_data: schemas.StudentLogin, db: Sessio
         }
     }
 
+@app.post("/newsletter", response_model=schemas.NewsletterResponse)
+@limiter.limit("5/minute")
+def newsletter_subscribe(
+    request: Request,
+    payload: schemas.NewsletterRequest,
+    db: Session = Depends(database.get_db),
+):
+    """
+    Suscripción al boletín "Mantente al día" (público, sin autenticación).
+    Guarda el correo, evita duplicados y reactiva si estaba dado de baja.
+    """
+    email = str(payload.email).strip().lower()
+
+    existing = db.query(models.NewsletterSubscriber).filter(
+        models.NewsletterSubscriber.email == email
+    ).first()
+
+    if existing:
+        if existing.is_active:
+            return {"ok": True, "message": "Ya estabas suscrito. ¡Gracias!", "already_subscribed": True}
+        existing.is_active = True
+        db.commit()
+        return {"ok": True, "message": "¡Bienvenido de vuelta! Te avisaremos de cada novedad.", "already_subscribed": True}
+
+    try:
+        db.add(models.NewsletterSubscriber(email=email))
+        db.commit()
+    except IntegrityError:
+        # Carrera entre dos peticiones con el mismo correo
+        db.rollback()
+        return {"ok": True, "message": "Ya estabas suscrito. ¡Gracias!", "already_subscribed": True}
+
+    return {"ok": True, "message": "¡Te avisaremos de cada novedad!", "already_subscribed": False}
+
+@app.get("/newsletter/subscribers")
+def newsletter_list(
+    current_user: dict = Depends(auth.get_current_teacher),
+    db: Session = Depends(database.get_db),
+):
+    """Lista de suscriptores activos del boletín (solo docentes)."""
+    subs = db.query(models.NewsletterSubscriber).filter(
+        models.NewsletterSubscriber.is_active == True  # noqa: E712
+    ).order_by(models.NewsletterSubscriber.created_at.desc()).all()
+    return {
+        "total": len(subs),
+        "subscribers": [
+            {"email": s.email, "created_at": s.created_at} for s in subs
+        ],
+    }
+
 @app.get("/student/dashboard")
 def student_dashboard(
     current_user: dict = Depends(auth.get_current_student),
@@ -166,6 +227,8 @@ def student_dashboard(
             "full_name": student.full_name,
             "document_id": student.document_id,
             "email": student.email,
+            "grade": student.grade,
+            "grupo": student.grupo,
         },
         "grades": [
             {
@@ -690,6 +753,66 @@ def _level_for(score: float) -> str:
     )
 
 
+def _normalize_name(s: str) -> str:
+    """minúsculas, sin acentos ni espacios extra — para emparejar nombres."""
+    import unicodedata
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode("ascii")
+    return " ".join(s.lower().split())
+
+
+async def _identify_names_by_ai(name_imgs: list, roster: list) -> list:
+    """Empareja cada recorte del nombre manuscrito con un estudiante de la clase
+    usando la IA de visión. Devuelve una lista (misma longitud que name_imgs) de
+    Student o None. Si la IA falla, devuelve todo None (el docente asigna a mano)."""
+    valid = [(i, img) for i, img in enumerate(name_imgs) if img]
+    if not valid or not roster:
+        return [None] * len(name_imgs)
+
+    roster_lines = "\n".join(f"{idx + 1}. {s.full_name}" for idx, s in enumerate(roster))
+    contents = []
+    for n, (_i, img) in enumerate(valid, start=1):
+        contents.append(f"Hoja {n}:")
+        contents.append(types.Part.from_bytes(data=img, mime_type="image/png"))
+    contents.append(
+        "Cada imagen es el NOMBRE escrito a mano por un estudiante en su examen.\n"
+        f"Esta es la lista EXACTA de estudiantes de la clase:\n{roster_lines}\n\n"
+        "Para cada hoja, identifica qué estudiante de la lista escribió ese nombre. "
+        "Devuelve el nombre TAL CUAL aparece en la lista. Si no hay una coincidencia "
+        "razonable, usa null.\n"
+        "Responde SOLO con un array JSON, sin texto extra: "
+        '[{"hoja": 1, "nombre": "..."}, {"hoja": 2, "nombre": null}]'
+    )
+
+    try:
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(client.models.generate_content, model=MODEL_NAME, contents=contents),
+            timeout=GEMINI_TIMEOUT,
+        )
+        raw = (resp.text or "").strip()
+        if "```json" in raw:
+            raw = raw.split("```json")[1].split("```")[0]
+        elif "```" in raw:
+            raw = raw.split("```")[1].split("```")[0]
+        parsed = json.loads(raw.strip())
+    except Exception as e:
+        logger.warning(f"Identificación por nombre (IA) falló: {e}")
+        return [None] * len(name_imgs)
+
+    by_norm = {_normalize_name(s.full_name): s for s in roster}
+    name_by_hoja = {}
+    if isinstance(parsed, list):
+        for item in parsed:
+            if isinstance(item, dict):
+                name_by_hoja[item.get("hoja")] = item.get("nombre")
+
+    out = [None] * len(name_imgs)
+    for n, (i, _img) in enumerate(valid, start=1):
+        nombre = name_by_hoja.get(n)
+        if nombre:
+            out[i] = by_norm.get(_normalize_name(nombre))
+    return out
+
+
 @app.post("/upload-exams-omr")
 @limiter.limit("30/minute")
 async def upload_exams_omr(
@@ -744,8 +867,19 @@ async def upload_exams_omr(
     db.add(db_exam)
     db.flush()
 
+    # Lista (roster) de la clase para identificar por nombre con IA de visión
+    roster_q = db.query(models.Student)
+    if grade:
+        roster_q = roster_q.filter(models.Student.grade == grade)
+    if grupo:
+        roster_q = roster_q.filter(models.Student.grupo == grupo)
+    roster = roster_q.all()
+
+    name_imgs = [pg.get("name_img") or b"" for pg in pages]
+    identified = await _identify_names_by_ai(name_imgs, roster)
+
     resultados = []
-    for pg in pages:
+    for idx, pg in enumerate(pages):
         marks = pg["answers"]            # {q: "A"|None}
         answers_detail = []
         correct = 0
@@ -759,6 +893,31 @@ async def upload_exams_omr(
                 "q": q, "selected": sel, "correct": corr, "is_correct": is_ok,
             })
         score = round(correct / num_q * 4 + 1, 2) if num_q else 1.0  # escala 1.0–5.0
+
+        # Identificación automática del estudiante por el NOMBRE manuscrito (IA)
+        matched = identified[idx] if idx < len(identified) else None
+
+        # Si se identificó al estudiante, persistir el resultado del examen
+        # para que aparezca en el detalle del periodo del estudiante.
+        if matched:
+            existing = db.query(models.ExamResult).filter(
+                models.ExamResult.exam_id == db_exam.id,
+                models.ExamResult.student_id == matched.id,
+            ).first()
+            result_data = dict(
+                exam_id=db_exam.id,
+                student_id=matched.id,
+                answers=answers_detail,
+                score=score,
+                ai_feedback="",
+                ai_suggestions="[]",
+            )
+            if existing:
+                for k, v in result_data.items():
+                    setattr(existing, k, v)
+            else:
+                db.add(models.ExamResult(**result_data))
+
         resultados.append({
             "page": pg["page"],
             "aligned": pg["aligned"],
@@ -767,7 +926,8 @@ async def upload_exams_omr(
             "correct": correct,
             "total": num_q,
             "answers": answers_detail,
-            "full_name": None,   # OMR no lee el nombre; se asigna después
+            "student_id": str(matched.id) if matched else None,
+            "full_name": matched.full_name if matched else None,
         })
 
     db.commit()
@@ -1315,3 +1475,150 @@ def delete_event(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al eliminar evento"
         )
+
+# ====================================================================
+# #13 — GENERADOR DE EXÁMENES CON IA
+# ====================================================================
+@app.post("/ai/generate-exam")
+@limiter.limit("10/minute")
+async def generate_exam(
+    request: Request,
+    req: schemas.ExamGenRequest,
+    current_user: dict = Depends(auth.get_current_teacher),
+):
+    """
+    Genera un examen tipo opción múltiple (A/B/C/D) con su clave de respuestas
+    usando Gemini. La clave se puede usar directamente en el calificador OMR.
+    """
+    prompt = f"""Eres un docente experto en {req.subject}. Genera {req.questions} preguntas de opción múltiple
+(4 opciones A, B, C, D) sobre el tema: "{req.topic}".
+Nivel de dificultad: {req.difficulty}.
+
+Responde ÚNICAMENTE con JSON válido, sin texto adicional, con esta forma exacta:
+{{
+  "title": "Título corto del examen",
+  "questions": [
+    {{"q": 1, "text": "enunciado", "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}}, "correct": "B", "explanation": "por qué B es correcta"}}
+  ]
+}}
+Genera EXACTAMENTE {req.questions} preguntas, numeradas desde 1."""
+
+    try:
+        for attempt in range(3):
+            try:
+                resp = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        client.models.generate_content, model=MODEL_NAME, contents=prompt
+                    ),
+                    timeout=GEMINI_TIMEOUT,
+                )
+                break
+            except asyncio.TimeoutError:
+                if attempt < 2:
+                    await asyncio.sleep((attempt + 1) * 2); continue
+                raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "Tiempo de espera agotado")
+            except Exception as e:
+                if ("503" in str(e) or "UNAVAILABLE" in str(e)) and attempt < 2:
+                    await asyncio.sleep((attempt + 1) * 2); continue
+                raise
+
+        raw = resp.text.strip()
+        if "```json" in raw:
+            raw = raw.split("```json")[1].split("```")[0]
+        elif "```" in raw:
+            raw = raw.split("```")[1].split("```")[0]
+        data = json.loads(raw.strip())
+
+        # Normalizar y construir answer_key listo para el OMR
+        questions = data.get("questions", []) if isinstance(data, dict) else []
+        answer_key = {}
+        for item in questions:
+            q = item.get("q")
+            corr = str(item.get("correct", "")).strip().upper()
+            if q is not None and corr in ("A", "B", "C", "D"):
+                answer_key[str(q)] = corr
+
+        return {
+            "title": data.get("title", f"Examen de {req.subject}") if isinstance(data, dict) else f"Examen de {req.subject}",
+            "subject": req.subject,
+            "questions": questions,
+            "answer_key": answer_key,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en generate-exam: {str(e)}")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "La IA no devolvió un examen válido. Intenta de nuevo.")
+
+
+# ====================================================================
+# #2 — GUARDAR NOTAS DEL OMR COMO CALIFICACIÓN DEL PERIODO
+# ====================================================================
+@app.post("/grades/apply-omr")
+def apply_omr_grades(
+    body: schemas.ApplyOmrRequest,
+    current_user: dict = Depends(auth.get_current_teacher),
+    db: Session = Depends(database.get_db),
+):
+    """
+    Toma una lista de {student_id, score} del calificador OMR y los guarda
+    como nota de la dimensión indicada (saber/hacer/ser) en el periodo dado.
+    Recalcula final y nivel. Crea la nota si no existe.
+    """
+    dim_col = f"score_{body.dimension}"
+    saved = 0
+    try:
+        for it in body.items:
+            grade = db.query(models.Grade).filter(
+                models.Grade.enrollment_id == it.student_id,
+                models.Grade.period_id == body.period_id,
+            ).first()
+            if not grade:
+                grade = models.Grade(
+                    id=uuid.uuid4(),
+                    enrollment_id=it.student_id,
+                    assignment_id=it.student_id,
+                    period_id=body.period_id,
+                    score_saber=1.0, score_hacer=1.0, score_ser=1.0,
+                )
+                db.add(grade)
+            setattr(grade, dim_col, it.score)
+            final = round((float(grade.score_saber) + float(grade.score_hacer) + float(grade.score_ser)) / 3, 2)
+            grade.final_period_score = final
+            grade.performance_level = (
+                "SUPERIOR" if final >= 4.6 else
+                "ALTO"     if final >= 4.0 else
+                "BÁSICO"   if final >= 3.0 else
+                "BAJO"
+            )
+            saved += 1
+        db.commit()
+        return {"saved": saved}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error en apply-omr: {str(e)}")
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "No se pudieron guardar las notas")
+
+
+# ====================================================================
+# #27 — CAMBIO DE CONTRASEÑA DEL DOCENTE
+# ====================================================================
+@app.post("/change-password")
+@limiter.limit("5/minute")
+def change_password(
+    request: Request,
+    body: schemas.ChangePasswordRequest,
+    current_user: dict = Depends(auth.get_current_teacher),
+    db: Session = Depends(database.get_db),
+):
+    user = db.query(models.User).filter(models.User.id == current_user.get("sub")).first()
+    if not user or not auth.verify_password(body.current_password, user.hashed_password):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "La contraseña actual es incorrecta")
+    try:
+        user.hashed_password = auth.hash_password(body.new_password)
+        db.commit()
+        return {"ok": True}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error al cambiar contraseña: {str(e)}")
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "No se pudo cambiar la contraseña")

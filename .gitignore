@@ -4,6 +4,7 @@ edu-grade-mocavi/.venv/
 *.pyc
 *.pyo
 edu-grade-mocavi/.env
+edu-grade-mocavi/.env.*
 edu-grade-mocavi/app/__pycache__/
 
 # === Frontend Next.js ===
@@ -25,3 +26,7 @@ Thumbs.db
 # === Logs / temporales ===
 *.log
 /tmp/
+
+# === Despliegue ===
+.vercel/
+frontend/.vercel/
