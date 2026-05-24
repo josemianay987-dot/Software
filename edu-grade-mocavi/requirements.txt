@@ -1,16 +1,34 @@
-fastapi==0.104.1
-uvicorn==0.24.0
-sqlalchemy==2.0.23
-psycopg2-binary==2.9.9
-pydantic==2.5.0
-python-dotenv==1.0.0
-google-genai==0.3.0
-pandas==2.1.3
-openpyxl==3.1.2
-PyJWT==2.8.1
-bcrypt==4.1.1
+# Versiones alineadas con el entorno de desarrollo (Python 3.12) donde la app
+# funciona. Mantener sincronizadas con la máquina local para evitar fallos en la nube.
+
+# Web / API
+fastapi==0.135.3
+uvicorn==0.44.0
+websockets==16.0
+python-multipart==0.0.24
+
+# Base de datos
+sqlalchemy==2.0.49
+psycopg2-binary==2.9.11
+
+# Validación de datos
+pydantic==2.12.5
+email-validator==2.3.0
+python-dotenv==1.2.2
+
+# Seguridad
+PyJWT==2.12.1
+bcrypt==5.0.0
 slowapi==0.1.9
-python-multipart==0.0.6
-opencv-python-headless==4.13.0.92   # OMR — lectura de burbujas
-numpy==2.4.4                          # OMR
-pymupdf==1.27.2.3                     # OMR — PDF→imagen + generar plantilla
+
+# IA (Gemini)
+google-genai==1.72.0
+
+# OMR — visión por computador
+opencv-python-headless==4.13.0.92
+numpy==2.4.4
+pymupdf==1.27.2.3
+
+# Exportación a Excel
+pandas==3.0.2
+openpyxl==3.1.5

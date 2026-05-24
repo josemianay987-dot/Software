@@ -8,13 +8,13 @@ services:
     plan: free
     # rootDir aplica si el backend está en una subcarpeta (nuestro caso)
     rootDir: edu-grade-mocavi
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /docs
     autoDeploy: true
     envVars:
       - key: PYTHON_VERSION
-        value: "3.11"
+        value: "3.12.7"
       - key: ENVIRONMENT
         value: production
       # Las claves sensibles las introduces en el dashboard de Render
