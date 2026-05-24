@@ -10,7 +10,7 @@ class TeacherLogin(BaseModel):
     password: str = Field(..., min_length=8, max_length=100)
 
 class StudentLogin(BaseModel):
-    document_id: str = Field(..., min_length=5, max_length=50)
+    document_id: str = Field(..., min_length=4, max_length=50)
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -22,7 +22,7 @@ class TokenResponse(BaseModel):
 
 class StudentCreate(BaseModel):
     full_name: str = Field(..., min_length=3, max_length=200)
-    document_id: str = Field(..., min_length=5, max_length=50)
+    document_id: str = Field(..., min_length=4, max_length=50)
     email: Optional[EmailStr] = None
     grade: Optional[str] = Field("11", max_length=20)
     grupo: Optional[str] = Field("1", max_length=20)
